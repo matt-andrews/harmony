@@ -1,0 +1,22 @@
+[package]
+name = "harmony-desktop"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop window for Harmony: runs the server in-process and shows the UI in the system webview"
+license = "MIT"
+build = "build.rs"
+
+[dependencies]
+harmony = { path = ".." }
+anyhow = "1"
+axum = "0.8"
+dirs = "7"
+dotenvy = "0.15"
+tao = "0.37"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wry = "0.57"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

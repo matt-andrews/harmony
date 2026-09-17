@@ -1,3 +1,7 @@
+[workspace]
+members = ["desktop"]
+resolver = "3"
+
 [package]
 name = "harmony"
 version = "0.1.0"
