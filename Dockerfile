@@ -28,10 +28,13 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --no-create-home harmony
+    && useradd --system --uid 10001 --no-create-home harmony \
+    && mkdir -p /data && chown harmony:harmony /data
 COPY --from=build /app/target/release/harmony /usr/local/bin/harmony
 USER harmony
 ENV HARMONY_BIND=0.0.0.0:8080 \
     RUST_LOG=harmony=info
+# Mount point for `HARMONY_STORAGE=file:/data`; unused with the Azure backend.
+VOLUME /data
 EXPOSE 8080
 ENTRYPOINT ["harmony"]

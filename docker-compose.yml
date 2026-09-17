@@ -3,10 +3,15 @@ services:
     build: .
     image: harmony:local
     container_name: harmony
-    # HARMONY_STORAGE (the SAS URL) comes from the gitignored .env file.
+    # HARMONY_STORAGE comes from the gitignored .env file. Either:
+    #   HARMONY_STORAGE=sas:https://<acct>.blob.core.windows.net/harmony?<sas>   (Azure Blob)
+    #   HARMONY_STORAGE=file:/data                                               (this mounted folder)
     env_file: .env
     environment:
-      HARMONY_BIND: 0.0.0.0:31415
+      # Must listen on all interfaces inside the container; overrides .env.
+      HARMONY_BIND: 0.0.0.0:8080
+    volumes:
+      - ./data:/data
     ports:
       - "31415:8080"
     restart: unless-stopped

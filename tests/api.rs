@@ -22,7 +22,7 @@ struct TestApp {
 async fn test_app() -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("harmony.json");
-    let storage = Storage::File(FileStorage::new(&path));
+    let storage = Storage::File(FileStorage::new(dir.path()));
     let (data, etag) = storage.load().await.unwrap();
     let state = Arc::new(AppState::new(data, etag, storage));
     TestApp {

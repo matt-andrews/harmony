@@ -5,8 +5,9 @@ and stop, sessions tagged with a project, projects grouped into ephemeral
 "tasks" (one per pickup), running totals and pay, and a simple period report.
 
 Rust (axum) backend serving an embedded Svelte 5 frontend. Persists to a
-single JSON document in Azure Blob Storage. Runs locally in Docker. No auth,
-dark theme, nothing else.
+single JSON document, either in a local folder (a mounted volume in Docker)
+or in Azure Blob Storage. Runs locally in Docker. No auth, dark theme,
+nothing else.
 
 ## Concepts
 
@@ -25,9 +26,20 @@ changing a rate re-prices that project's history.
 
 ## Running it
 
-### 1. Azure storage
+### 1. Pick a storage backend
 
-Harmony talks to Blob Storage with a **container-level SAS URL**. The
+One env var, `HARMONY_STORAGE`, chooses where the data lives. The backend is
+inferred from the value; both backends use the same layout (`harmony.json`
+at the root, daily copies under `backups/`).
+
+| `HARMONY_STORAGE` | Backend |
+|---|---|
+| `file:<dir>` (or any bare path) | Local folder. `file:./data` for `cargo run`, `file:/data` in Docker (mounted from `./data`). |
+| `sas:<url>` (or a bare `https://` URL) | Azure Blob container, via a container-level SAS URL. |
+
+**Local folder** needs nothing else. Create `.env` from `.env.example` and go.
+
+**Azure** talks to Blob Storage with a **container-level SAS URL**. The
 official Rust SDK supports Entra ID tokens and SAS URLs only, so there is no
 account-key / connection-string mode.
 
@@ -54,8 +66,11 @@ and put `HARMONY_STORAGE=sas:https://<acct>.blob.core.windows.net/harmony?<sas>`
 docker compose up --build -d
 ```
 
-Open <http://localhost:8080>. The image is a multi-stage build (Node builds
-the frontend, Rust embeds it, Debian slim runs it).
+Open <http://localhost:31415>. The compose file mounts `./data` at `/data`
+inside the container, so `HARMONY_STORAGE=file:/data` in `.env` keeps the
+data on the host at `./data/harmony.json`; with a `sas:` value the mount is
+simply unused. The image is a multi-stage build (Node builds the frontend,
+Rust embeds it, Debian slim runs it as a non-root user).
 
 ### 3. Local development
 
@@ -79,13 +94,14 @@ something to serve: `npm --prefix web run build`. Debug builds read
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `HARMONY_STORAGE` | `sas:<container SAS URL>` or `file:<path>` | required |
+| `HARMONY_STORAGE` | `file:<dir>` / bare path, or `sas:<container SAS URL>` / bare `https://` URL | required |
 | `HARMONY_BIND` | Listen address | `127.0.0.1:8080` (Docker sets `0.0.0.0:8080`) |
 | `RUST_LOG` | Log filter | `harmony=info,tower_http=info` |
 
 ## Data
 
-Everything lives in one document, `harmony.json`, in the container:
+Everything lives in one document, `harmony.json`, at the root of the folder
+or container:
 
 ```json
 {
@@ -97,9 +113,11 @@ Everything lives in one document, `harmony.json`, in the container:
 ```
 
 The server loads it once at startup and writes it back on every change with
-an `If-Match` ETag, so two instances pointed at the same container can't
-silently clobber each other (the loser gets a 409 and should be restarted).
-The first write of each UTC day also drops a copy at `backups/<date>.json`.
+a version check (an `If-Match` ETag on Azure, the file's mtime and size
+locally), so two instances pointed at the same store, or a hand edit while
+the app runs, can't be silently clobbered: the write fails with a 409 and
+the app should be restarted to reload. The first write of each UTC day also
+drops a copy at `backups/<date>.json`.
 
 ## API
 
@@ -130,7 +148,7 @@ npm --prefix web run check
 
 ```
 src/domain/    model, mutations (ops), read models (views), colour palette
-src/storage/   Storage enum: blob (Azure SAS) and file backends
+src/storage/   Storage enum: file (local dir / volume) and blob (Azure SAS) backends
 src/api/       axum handlers + AppState (mutate-copy-save-commit)
 src/frontend.rs  embedded web/dist with SPA fallback
 web/           Svelte 5 + Vite + TypeScript

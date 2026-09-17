@@ -5,27 +5,25 @@
 //! `harmony.json`; a daily copy is written to `backups/<date>.json` on the
 //! first save of each day.
 
-use std::sync::Mutex;
-
 use anyhow::Context;
 use azure_core::error::ErrorKind;
 use azure_core::http::{Etag as AzEtag, RequestContent, StatusCode, Url};
 use azure_storage_blob::BlobContainerClient;
 use azure_storage_blob::models::BlobClientUploadOptions;
-use chrono::{NaiveDate, Utc};
+use chrono::Utc;
 use tracing::{info, warn};
 
-use super::{Etag, Result, StorageError, parse_document, serialize_document};
+use super::{
+    BackupTracker, DOCUMENT, Etag, Result, StorageError, backup_name, parse_document,
+    serialize_document,
+};
 use crate::domain::AppData;
-
-const DOCUMENT: &str = "harmony.json";
 
 pub struct BlobStorage {
     container: BlobContainerClient,
     /// Secret-free rendering of the container URL for logs.
     label: String,
-    /// Date of the most recent backup this process wrote.
-    backup_day: Mutex<Option<NaiveDate>>,
+    backups: BackupTracker,
 }
 
 impl BlobStorage {
@@ -41,7 +39,7 @@ impl BlobStorage {
         Ok(Self {
             container,
             label: label.to_string(),
-            backup_day: Mutex::new(None),
+            backups: BackupTracker::default(),
         })
     }
 
@@ -113,14 +111,10 @@ impl BlobStorage {
     /// Best-effort daily snapshot. Never fails the save.
     async fn maybe_backup(&self, bytes: &[u8]) {
         let today = Utc::now().date_naive();
-        let due = {
-            let day = self.backup_day.lock().expect("backup_day lock");
-            *day != Some(today)
-        };
-        if !due {
+        if !self.backups.due(today) {
             return;
         }
-        let name = format!("backups/{today}.json");
+        let name = backup_name(today);
         let opts = BlobClientUploadOptions {
             blob_content_type: Some("application/json".into()),
             ..Default::default()
@@ -133,7 +127,7 @@ impl BlobStorage {
         {
             Ok(_) => {
                 info!("wrote backup {name}");
-                *self.backup_day.lock().expect("backup_day lock") = Some(today);
+                self.backups.mark(today);
             }
             Err(e) => warn!("backup {name} failed (will retry on next save): {e}"),
         }
