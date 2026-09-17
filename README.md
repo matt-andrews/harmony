@@ -90,6 +90,27 @@ Before running the Rust server standalone, build the frontend once so it has
 something to serve: `npm --prefix web run build`. Debug builds read
 `web/dist` from disk on every request; release builds embed it.
 
+### 4. Desktop app
+
+`harmony-desktop` is a native window (system WebView2 on Windows) that runs
+the same server in-process on a random localhost port. No Docker needed.
+
+```bash
+cargo run -p harmony-desktop                      # dev
+cargo build --release -p harmony-desktop          # -> target/release/harmony-desktop.exe
+```
+
+- Storage comes from `HARMONY_STORAGE` (environment, or a `.env` next to the
+  exe, or in the working directory). When unset it defaults to a local folder:
+  `%LOCALAPPDATA%\Harmony` on Windows (`~/.local/share/Harmony` on Linux,
+  `~/Library/Application Support/Harmony` on macOS).
+- `harmony-desktop --url http://localhost:31415` skips the embedded server and
+  just shows a running instance, e.g. the Docker one.
+- Release builds hide the console and log to `harmony-desktop.log` in that
+  data folder. If startup fails, the window shows the error and the log path.
+- Windows 11 ships the WebView2 runtime; on older Windows install it from
+  Microsoft. `scripts/make-icons.py` regenerates the icons if you change the mark.
+
 ## Configuration
 
 | Variable | Meaning | Default |

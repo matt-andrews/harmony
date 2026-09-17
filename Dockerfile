@@ -13,15 +13,18 @@ WORKDIR /app
 # Build dependencies once against stub sources so they cache independently
 # of the application code.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src \
+COPY desktop/Cargo.toml ./desktop/Cargo.toml
+RUN mkdir -p src desktop/src \
     && echo 'fn main() {}' > src/main.rs \
     && touch src/lib.rs \
-    && cargo build --release --locked \
+    && echo 'fn main() {}' > desktop/src/main.rs \
+    && echo 'fn main() {}' > desktop/build.rs \
+    && cargo build --release --locked -p harmony \
     && rm -rf src
 
 COPY src ./src
 COPY --from=web /web/dist ./web/dist
-RUN touch src/main.rs src/lib.rs && cargo build --release --locked
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked -p harmony
 
 # ---- runtime ---------------------------------------------------------------
 FROM debian:bookworm-slim
