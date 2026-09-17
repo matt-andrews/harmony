@@ -1,0 +1,12 @@
+services:
+  harmony:
+    build: .
+    image: harmony:local
+    container_name: harmony
+    # HARMONY_STORAGE (the SAS URL) comes from the gitignored .env file.
+    env_file: .env
+    environment:
+      HARMONY_BIND: 0.0.0.0:31415
+    ports:
+      - "31415:8080"
+    restart: unless-stopped
