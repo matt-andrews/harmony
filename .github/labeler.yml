@@ -1,0 +1,18 @@
+## publishable areas
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file: "src/**"
+
+## non-publishable areas
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - ".assets/**"
+          - "README.md"
+          - "LICENSE.md"
+
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
