@@ -10,7 +10,7 @@
           - "docs/**"
           - ".assets/**"
           - "README.md"
-          - "LICENSE.md"
+          - "LICENSE-MIT"
 
 "area: ci":
   - changed-files:
