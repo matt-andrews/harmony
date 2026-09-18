@@ -5,8 +5,8 @@
   import { fmtDate, fmtDuration, fmtMoney, fmtTime } from '../lib/time';
 
   const PALETTE = [
-    '#f97316', '#3b82f6', '#22c55e', '#ec4899', '#eab308', '#a855f7',
-    '#14b8a6', '#ef4444', '#06b6d4', '#84cc16', '#8b5cf6', '#f43f5e',
+    '#f5a97f', '#8aadf4', '#a6da95', '#f5bde6', '#eed49f', '#c6a0f6',
+    '#8bd5ca', '#ed8796', '#91d7e3', '#7dc4e4', '#b7bdf8', '#f0c6c6',
   ];
 
   let showArchived = $state(false);

@@ -27,7 +27,7 @@ use config::{Mode, app_data_dir, resolve_mode};
 
 const ICON_RGBA: &[u8] = include_bytes!("../icons/harmony-64.rgba");
 const ICON_SIZE: u32 = 64;
-const BACKGROUND: (u8, u8, u8, u8) = (15, 17, 21, 255);
+const BACKGROUND: (u8, u8, u8, u8) = (30, 32, 48, 255);
 
 fn main() {
     load_dotenv();
@@ -171,9 +171,9 @@ fn error_page(message: &str, log_path: Option<&std::path::Path>) -> String {
         .unwrap_or_default();
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Harmony</title><style>\
-         body{{margin:0;background:#0f1115;color:#e6e8ee;font:15px system-ui,sans-serif;padding:32px}}\
-         h1{{font-size:18px;margin:0 0 12px}}pre{{white-space:pre-wrap;background:#171a21;border:1px solid #2a2f3a;\
-         border-radius:8px;padding:12px}}code{{color:#f97316}}.muted{{color:#8b93a7}}</style></head><body>\
+         body{{margin:0;background:#1e2030;color:#cad3f5;font:15px system-ui,sans-serif;padding:32px}}\
+         h1{{font-size:18px;margin:0 0 12px}}pre{{white-space:pre-wrap;background:#24273a;border:1px solid #494d64;\
+         border-radius:8px;padding:12px}}code{{color:#c6a0f6}}.muted{{color:#a5adcb}}</style></head><body>\
          <h1>Harmony could not start</h1><pre>{}</pre>{log}\
          <p class=\"muted\">Check <code>HARMONY_STORAGE</code> in the environment or a <code>.env</code> next to the exe, \
          or pass <code>--url http://localhost:31415</code> to attach to a running instance.</p></body></html>",

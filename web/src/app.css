@@ -1,16 +1,18 @@
 :root {
   color-scheme: dark;
-  --bg: #0f1115;
-  --surface: #171a21;
-  --surface-2: #1f232c;
-  --surface-3: #272c37;
-  --border: #2a2f3a;
-  --text: #e6e8ee;
-  --muted: #8b93a7;
-  --accent: #f97316;
-  --accent-text: #0f1115;
-  --danger: #ef4444;
-  --ok: #22c55e;
+  /* Catppuccin Macchiato — https://catppuccin.com/palette/ */
+  --bg: #1e2030; /* mantle */
+  --surface: #24273a; /* base */
+  --surface-2: #363a4f; /* surface0 */
+  --surface-3: #494d64; /* surface1 */
+  --border: #494d64; /* surface1 */
+  --border-hover: #5b6078; /* surface2 */
+  --text: #cad3f5;
+  --muted: #a5adcb; /* subtext0 */
+  --accent: #c6a0f6; /* mauve */
+  --accent-text: #181926; /* crust */
+  --danger: #ed8796; /* red */
+  --ok: #a6da95; /* green */
   --radius: 10px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   font-family:
@@ -68,7 +70,7 @@ button {
 }
 button:hover:not(:disabled) {
   background: var(--surface-3);
-  border-color: #3a4050;
+  border-color: var(--border-hover);
 }
 button:disabled {
   opacity: 0.5;
@@ -81,8 +83,8 @@ button.primary {
   font-weight: 600;
 }
 button.primary:hover:not(:disabled) {
-  background: #fb8a3c;
-  border-color: #fb8a3c;
+  background: color-mix(in srgb, var(--accent) 85%, white);
+  border-color: color-mix(in srgb, var(--accent) 85%, white);
 }
 button.danger {
   color: var(--danger);

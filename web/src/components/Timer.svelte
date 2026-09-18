@@ -7,72 +7,70 @@
     startSession,
     stopSession,
     tagSession,
+    taskTotalSecs,
     projectById,
   } from '../lib/state.svelte';
   import type { PickChoice } from '../lib/state.svelte';
-  import { fmtClock, fmtMoney, fmtTime } from '../lib/time';
+  import { fmtClock, fmtDuration, fmtMoney, fmtTime } from '../lib/time';
   import ProjectPicker from './ProjectPicker.svelte';
-
-  const LAST_KEY = 'harmony.lastProject';
 
   const running = $derived(activeSession());
   const projects = $derived(app.view?.projects ?? []);
 
-  // Project preselected for the next Start, remembered across reloads.
-  let nextChoice = $state<PickChoice | null>(null);
-  let nextProjectId = $derived.by(() => {
-    if (nextChoice?.kind === 'project') return nextChoice.projectId;
-    return null;
-  });
-  $effect(() => {
-    if (nextChoice) return;
-    try {
-      const last = localStorage.getItem(LAST_KEY);
-      if (last && projects.some((p) => p.id === last && !p.archived)) {
-        nextChoice = { kind: 'project', projectId: last, newTask: false };
-      }
-    } catch {
-      /* ignore */
+  // What the next Start does. By default it resumes the last project worked on
+  // (the server derives that from the data); `override` is an explicit pick made
+  // while idle, with `null` meaning "start untagged".
+  let override = $state<PickChoice | null | undefined>(undefined);
+  const nextChoice = $derived.by((): PickChoice | null => {
+    if (override === null || override?.kind === 'create') return override;
+    if (override?.kind === 'project') {
+      // Ignore a pick that was archived from the Projects tab in the meantime.
+      const p = projectById(override.projectId);
+      if (p && !p.archived) return override;
     }
+    const resume = app.view?.resume_project_id;
+    return resume ? { kind: 'project', projectId: resume, newTask: false } : null;
   });
+  const nextProject = $derived(nextChoice?.kind === 'project' ? projectById(nextChoice.projectId) : undefined);
 
-  /** Persist and preselect the project for the next Start (never carrying "new task" over). */
-  function remember(id: string | null) {
-    nextChoice = id ? { kind: 'project', projectId: id, newTask: false } : null;
-    try {
-      if (id) localStorage.setItem(LAST_KEY, id);
-      else localStorage.removeItem(LAST_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function onStart() {
-    await startSession(nextChoice);
-    remember(activeSession()?.project_id ?? null);
+  async function onStart(newTask = false) {
+    const choice = nextChoice && nextChoice.kind !== 'untag' && newTask ? { ...nextChoice, newTask } : nextChoice;
+    await startSession(choice);
+    override = undefined;
   }
 
   async function onTagRunning(choice: PickChoice) {
     if (!running) return;
     await tagSession(running.id, choice);
-    remember(activeSession()?.project_id ?? null);
   }
 
   const runningProject = $derived(running ? projectById(running.project_id) : undefined);
+  const runningTaskTotal = $derived(running ? taskTotalSecs(running) : null);
   const nextLabel = $derived.by(() => {
     if (!nextChoice) return null;
     if (nextChoice.kind === 'create') return `will create “${nextChoice.name}”`;
-    if (nextChoice.kind === 'untag') return null;
-    const p = projectById(nextChoice.projectId);
+    const p = nextProject;
     if (!p) return null;
-    const n = p.current_task_number === null ? 1 : nextChoice.newTask ? p.current_task_number + 1 : p.current_task_number;
-    return `task #${n}${nextChoice.newTask ? ' (new)' : ''}`;
+    if (p.current_task_number === null) return 'task #1';
+    if (nextChoice.kind === 'project' && nextChoice.newTask) return `task #${p.current_task_number + 1} (new)`;
+    return `task #${p.current_task_number} · ${fmtDuration(p.current_task_total_secs ?? 0)} so far`;
   });
+  /** "New task" only makes sense once the project has a task to move on from. */
+  const canStartNewTask = $derived(
+    nextChoice?.kind === 'project' && !nextChoice.newTask && nextProject?.current_task_number != null,
+  );
 </script>
 
 <section class="timer card" class:running={!!running} style:--band={runningProject?.color ?? 'transparent'}>
   {#if running}
-    <div class="clock mono">{fmtClock(elapsedSecs(running))}</div>
+    <div class="readout">
+      <div class="clock mono">{fmtClock(elapsedSecs(running))}</div>
+      {#if runningTaskTotal !== null}
+        <div class="total muted">
+          task #{running.task_number} total <strong class="mono">{fmtDuration(runningTaskTotal)}</strong>
+        </div>
+      {/if}
+    </div>
     <div class="meta">
       <div class="row">
         <span class="muted">since {fmtTime(running.started_at)}</span>
@@ -98,17 +96,26 @@
       <div class="pick">
         <ProjectPicker
           {projects}
-          projectId={nextProjectId}
+          projectId={nextProject?.id ?? null}
           placeholder="Project for next session (optional)"
           onpick={(c) => {
-            if (c.kind === 'project') remember(c.projectId);
-            else if (c.kind === 'untag') remember(null);
-            else nextChoice = c;
+            override = c.kind === 'untag' ? null : c;
           }}
         />
       </div>
     </div>
-    <button class="big primary" onclick={onStart} disabled={app.busy}>Start</button>
+    <div class="actions">
+      <button class="big primary" onclick={() => onStart()} disabled={app.busy}>Start</button>
+      {#if canStartNewTask && nextProject}
+        <button
+          onclick={() => onStart(true)}
+          disabled={app.busy}
+          title="Start a fresh pickup of {nextProject.name}"
+        >
+          New task #{(nextProject.current_task_number ?? 0) + 1}
+        </button>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -134,6 +141,19 @@
   .clock.idle {
     color: var(--muted);
   }
+  .total {
+    font-size: 14px;
+  }
+  .total strong {
+    color: var(--text);
+    font-size: 17px;
+    margin-left: 4px;
+  }
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
   .meta {
     display: flex;
     flex-direction: column;
@@ -156,11 +176,11 @@
   .big.danger {
     background: var(--danger);
     border-color: var(--danger);
-    color: white;
+    color: var(--accent-text);
     font-weight: 600;
   }
   .big.danger:hover:not(:disabled) {
-    background: #f05252;
+    background: color-mix(in srgb, var(--danger) 85%, white);
   }
   @media (max-width: 560px) {
     .timer {

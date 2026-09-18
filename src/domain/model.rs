@@ -6,7 +6,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const DATA_VERSION: u32 = 1;
+use super::palette::migrate_color;
+
+/// 2: project colours moved to the Catppuccin palette.
+pub const DATA_VERSION: u32 = 2;
 
 /// A reusable label: a client / gig you can pick up repeatedly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,8 +76,9 @@ pub struct AppData {
     pub sessions: Vec<Session>,
 }
 
+/// Documents written before the field existed are version 1.
 fn default_version() -> u32 {
-    DATA_VERSION
+    1
 }
 
 impl Default for AppData {
@@ -85,6 +89,21 @@ impl Default for AppData {
             tasks: Vec::new(),
             sessions: Vec::new(),
         }
+    }
+}
+
+impl AppData {
+    /// Bring an older document up to [`DATA_VERSION`]. In memory only: the
+    /// result is persisted by the next ordinary save.
+    pub fn migrate(&mut self) {
+        if self.version < 2 {
+            for p in &mut self.projects {
+                if let Some(color) = migrate_color(&p.color) {
+                    p.color = color.to_string();
+                }
+            }
+        }
+        self.version = self.version.max(DATA_VERSION);
     }
 }
 
@@ -124,6 +143,39 @@ mod tests {
     #[test]
     fn old_document_without_version_defaults() {
         let back: AppData = serde_json::from_str(r#"{"projects":[],"tasks":[],"sessions":[]}"#).unwrap();
-        assert_eq!(back.version, DATA_VERSION);
+        assert_eq!(back.version, 1);
+    }
+
+    fn with_colors(version: u32, colors: &[&str]) -> AppData {
+        let mut d = AppData { version, ..AppData::default() };
+        for (i, c) in colors.iter().enumerate() {
+            d.projects.push(Project {
+                id: Uuid::new_v4(),
+                name: format!("p{i}"),
+                hourly_rate: 0.0,
+                color: c.to_string(),
+                created_at: Utc::now(),
+                archived: false,
+            });
+        }
+        d
+    }
+
+    #[test]
+    fn migrate_remaps_legacy_colors_and_keeps_custom_ones() {
+        let mut d = with_colors(1, &["#3b82f6", "#123456"]);
+        d.migrate();
+        assert_eq!(d.version, DATA_VERSION);
+        assert_eq!(d.projects[0].color, "#8aadf4");
+        assert_eq!(d.projects[1].color, "#123456");
+    }
+
+    #[test]
+    fn migrate_leaves_current_documents_alone() {
+        // A v2 user may have hand-picked an old palette colour; keep it.
+        let mut d = with_colors(DATA_VERSION, &["#3b82f6"]);
+        let before = d.clone();
+        d.migrate();
+        assert_eq!(d, before);
     }
 }

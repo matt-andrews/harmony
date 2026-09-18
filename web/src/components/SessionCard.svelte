@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SessionView, UpdateSession } from '../lib/api';
-  import { app, elapsedSecs, livePay, tagSession, updateSession, deleteSession } from '../lib/state.svelte';
+  import { app, elapsedSecs, livePay, taskTotalSecs, tagSession, updateSession, deleteSession } from '../lib/state.svelte';
   import { fmtDuration, fmtMoney, fmtTime, fromLocalInput, toLocalInput } from '../lib/time';
   import ProjectPicker from './ProjectPicker.svelte';
 
@@ -61,6 +61,7 @@
         <span class="chip">task #{session.task_number}</span>
         <span class="chip" class:first={isFirst}>
           session {session.ordinal} of {session.task_session_count}
+          {#if (session.task_session_count ?? 0) > 1}· task {fmtDuration(taskTotalSecs(session) ?? 0)}{/if}
         </span>
         {#if isFirst}
           <span class="badge">new task</span>
