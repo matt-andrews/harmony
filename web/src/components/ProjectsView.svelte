@@ -2,7 +2,7 @@
   import * as api from '../lib/api';
   import type { ProjectSummary, ProjectView } from '../lib/api';
   import { app, updateProject } from '../lib/state.svelte';
-  import { fmtDate, fmtDuration, fmtMoney, fmtTime } from '../lib/time';
+  import { fmtDate, fmtDuration, fmtMoney, fmtTaskTotal, fmtTime } from '../lib/time';
 
   const PALETTE = [
     '#f5a97f', '#8aadf4', '#a6da95', '#f5bde6', '#eed49f', '#c6a0f6',
@@ -120,7 +120,7 @@
                 <td>{t.first_started ? `${fmtDate(t.first_started)} ${fmtTime(t.first_started)}` : '—'}</td>
                 <td>{t.last_ended ? `${fmtDate(t.last_ended)} ${fmtTime(t.last_ended)}` : 'running'}</td>
                 <td class="num">{t.session_count}</td>
-                <td class="num">{fmtDuration(t.total_secs)}</td>
+                <td class="num">{fmtTaskTotal(t.total_secs)}</td>
                 <td class="num">{fmtMoney(t.total_pay)}</td>
               </tr>
             {/each}

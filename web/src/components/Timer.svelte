@@ -11,7 +11,7 @@
     projectById,
   } from '../lib/state.svelte';
   import type { PickChoice } from '../lib/state.svelte';
-  import { fmtClock, fmtDuration, fmtMoney, fmtTime } from '../lib/time';
+  import { fmtClock, fmtMoney, fmtTaskTotal, fmtTime } from '../lib/time';
   import ProjectPicker from './ProjectPicker.svelte';
 
   const running = $derived(activeSession());
@@ -53,7 +53,7 @@
     if (!p) return null;
     if (p.current_task_number === null) return 'task #1';
     if (nextChoice.kind === 'project' && nextChoice.newTask) return `task #${p.current_task_number + 1} (new)`;
-    return `task #${p.current_task_number} · ${fmtDuration(p.current_task_total_secs ?? 0)} so far`;
+    return `task #${p.current_task_number} · ${fmtTaskTotal(p.current_task_total_secs ?? 0)} so far`;
   });
   /** "New task" only makes sense once the project has a task to move on from. */
   const canStartNewTask = $derived(
@@ -67,7 +67,7 @@
       <div class="clock mono">{fmtClock(elapsedSecs(running))}</div>
       {#if runningTaskTotal !== null}
         <div class="total muted">
-          task #{running.task_number} total <strong class="mono">{fmtDuration(runningTaskTotal)}</strong>
+          task #{running.task_number} total <strong class="mono">{fmtTaskTotal(runningTaskTotal)}</strong>
         </div>
       {/if}
     </div>

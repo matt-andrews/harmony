@@ -8,14 +8,37 @@ export function fmtClock(secs: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
-/** "2h 08m", "45m", "0m" */
-export function fmtDuration(secs: number): string {
-  // Round to whole minutes first so 1h 59m 40s reads "2h 00m", not "1h 60m".
-  const mins = Math.round(Math.max(0, secs) / 60);
+function fmtMinutes(mins: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   if (h === 0) return `${m}m`;
   return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** "2h 08m", "45m", "0m" */
+export function fmtDuration(secs: number): string {
+  // Round to whole minutes first so 1h 59m 40s reads "2h 00m", not "1h 60m".
+  return fmtMinutes(Math.round(Math.max(0, secs) / 60));
+}
+
+/**
+ * A task's grand total, the figure that gets reported: whole minutes, always
+ * rounded up. Only an exact :00 stays put (12:00:00 -> "12h 00m", 12:00:01 -> "12h 01m").
+ */
+export function fmtTaskTotal(secs: number): string {
+  // Whole seconds first: the live clock is fractional, and 2:00.4 is still "on the 00".
+  return fmtMinutes(Math.ceil(Math.floor(Math.max(0, secs)) / 60));
+}
+
+/** To the second, for individual sessions: "1h 02m 05s", "2m 05s", "5s" */
+export function fmtExact(secs: number): string {
+  const s = Math.floor(Math.max(0, secs));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, '0');
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${r}s`;
+  if (m > 0) return `${m}m ${r}s`;
+  return `${s % 60}s`;
 }
 
 /** Decimal hours for reports: "12.75" */

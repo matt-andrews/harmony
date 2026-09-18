@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SessionView, UpdateSession } from '../lib/api';
   import { app, elapsedSecs, livePay, taskTotalSecs, tagSession, updateSession, deleteSession } from '../lib/state.svelte';
-  import { fmtDuration, fmtMoney, fmtTime, fromLocalInput, toLocalInput } from '../lib/time';
+  import { fmtExact, fmtMoney, fmtTaskTotal, fmtTime, fromLocalInput, toLocalInput } from '../lib/time';
   import ProjectPicker from './ProjectPicker.svelte';
 
   interface Props {
@@ -61,7 +61,7 @@
         <span class="chip">task #{session.task_number}</span>
         <span class="chip" class:first={isFirst}>
           session {session.ordinal} of {session.task_session_count}
-          {#if (session.task_session_count ?? 0) > 1}· task {fmtDuration(taskTotalSecs(session) ?? 0)}{/if}
+          {#if (session.task_session_count ?? 0) > 1}· task {fmtTaskTotal(taskTotalSecs(session) ?? 0)}{/if}
         </span>
         {#if isFirst}
           <span class="badge">new task</span>
@@ -79,7 +79,7 @@
         {fmtTime(session.started_at)} – {session.ended_at ? fmtTime(session.ended_at) : 'now'}
       </span>
       <span class="muted">·</span>
-      <span class="mono strong">{fmtDuration(elapsedSecs(session))}</span>
+      <span class="mono strong">{fmtExact(elapsedSecs(session))}</span>
       {#if session.project_id}
         <span class="muted">·</span>
         <span class="mono pay">{fmtMoney(livePay(session))}</span>
