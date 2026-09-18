@@ -33,6 +33,18 @@ export function elapsedSecs(s: SessionView): number {
   return Math.max(0, (app.now - Date.parse(s.started_at)) / 1000);
 }
 
+/** Seconds the running session has gained since the server computed the view. */
+function liveDrift(taskId: string | null): number {
+  const a = activeSession();
+  return a && a.task_id === taskId ? elapsedSecs(a) - a.duration_secs : 0;
+}
+
+/** Total for the session's whole task; ticks while that task is running. */
+export function taskTotalSecs(s: SessionView): number | null {
+  if (s.task_total_secs === null) return null;
+  return s.task_total_secs + liveDrift(s.task_id);
+}
+
 /** Live pay; recomputed client-side for the running session. */
 export function livePay(s: SessionView): number {
   if (s.ended_at) return s.pay;

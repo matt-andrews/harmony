@@ -115,7 +115,10 @@ pub fn backup_name(day: NaiveDate) -> String {
 }
 
 pub(crate) fn parse_document(bytes: &[u8]) -> Result<AppData> {
-    serde_json::from_slice(bytes).map_err(|e| StorageError::Corrupt(e.to_string()))
+    let mut data: AppData =
+        serde_json::from_slice(bytes).map_err(|e| StorageError::Corrupt(e.to_string()))?;
+    data.migrate();
+    Ok(data)
 }
 
 pub(crate) fn serialize_document(data: &AppData) -> Result<Vec<u8>> {

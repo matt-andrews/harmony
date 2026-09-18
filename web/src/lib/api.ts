@@ -11,6 +11,7 @@ export interface ProjectView {
   total_pay: number;
   task_count: number;
   current_task_number: number | null;
+  current_task_total_secs: number | null;
 }
 
 export interface SessionView {
@@ -27,11 +28,13 @@ export interface SessionView {
   task_number: number | null;
   ordinal: number | null;
   task_session_count: number | null;
+  task_total_secs: number | null;
 }
 
 export interface StateView {
   server_time: string;
   active_session_id: string | null;
+  resume_project_id: string | null;
   projects: ProjectView[];
   sessions: SessionView[];
 }

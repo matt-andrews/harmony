@@ -10,9 +10,10 @@ export function fmtClock(secs: number): string {
 
 /** "2h 08m", "45m", "0m" */
 export function fmtDuration(secs: number): string {
-  const s = Math.max(0, Math.round(secs));
-  const h = Math.floor(s / 3600);
-  const m = Math.round((s % 3600) / 60);
+  // Round to whole minutes first so 1h 59m 40s reads "2h 00m", not "1h 60m".
+  const mins = Math.round(Math.max(0, secs) / 60);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
   if (h === 0) return `${m}m`;
   return `${h}h ${String(m).padStart(2, '0')}m`;
 }

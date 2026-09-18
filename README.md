@@ -127,7 +127,7 @@ or container:
 ```json
 {
   "version": 1,
-  "projects": [{ "id": "…", "name": "contoso", "hourly_rate": 40.0, "color": "#f97316", "created_at": "…", "archived": false }],
+  "projects": [{ "id": "…", "name": "contoso", "hourly_rate": 40.0, "color": "#f5a97f", "created_at": "…", "archived": false }],
   "tasks":    [{ "id": "…", "project_id": "…", "number": 1, "created_at": "…" }],
   "sessions": [{ "id": "…", "task_id": "…", "started_at": "…", "ended_at": "…", "note": "…" }]
 }

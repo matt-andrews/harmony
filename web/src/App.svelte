@@ -94,6 +94,6 @@
     padding: 8px 12px;
     margin-bottom: 12px;
     border-color: var(--danger);
-    color: #fca5a5;
+    color: var(--danger);
   }
 </style>
