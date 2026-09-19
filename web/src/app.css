@@ -44,6 +44,15 @@ body {
   padding: 16px 16px 64px;
 }
 
+/* The desktop window collapsed into its floating strip (see lib/desktop.svelte.ts). */
+html.compact body {
+  overflow: hidden;
+}
+html.compact #app {
+  max-width: none;
+  padding: 0;
+}
+
 h1,
 h2,
 h3 {

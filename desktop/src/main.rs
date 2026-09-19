@@ -6,28 +6,39 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod compact;
 mod config;
+mod ipc;
+mod settings;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use tao::dpi::LogicalSize;
+use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::window::{Icon, WindowBuilder};
-use tracing::{error, info};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+#[cfg(windows)]
+use tao::platform::windows::WindowExtWindows;
+use tao::window::{Icon, Window, WindowBuilder};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use wry::WebViewBuilder;
 
 use harmony::storage::Storage;
 use harmony::{AppState, router};
 
+use compact::{COMPACT_SIZE, Monitor, place};
 use config::{Mode, app_data_dir, resolve_mode};
+use ipc::IpcMessage;
+use settings::Settings;
 
 const ICON_RGBA: &[u8] = include_bytes!("../icons/harmony-64.rgba");
 const ICON_SIZE: u32 = 64;
 const BACKGROUND: (u8, u8, u8, u8) = (30, 32, 48, 255);
+/// Logical sizes of the full window.
+const FULL_SIZE: (f64, f64) = (960.0, 720.0);
+const MIN_SIZE: (f64, f64) = (480.0, 400.0);
 
 fn main() {
     load_dotenv();
@@ -44,7 +55,8 @@ fn main() {
         }
     };
 
-    if let Err(e) = run_window(content) {
+    let settings_path = app_data_dir(data_dir.as_deref()).ok().map(|d| d.join(settings::FILE_NAME));
+    if let Err(e) = run_window(content, settings_path) {
         error!("window failed: {e:#}");
         std::process::exit(1);
     }
@@ -129,37 +141,154 @@ fn start(data_dir: Option<&std::path::Path>) -> anyhow::Result<String> {
     }
 }
 
-fn run_window(content: Content) -> anyhow::Result<()> {
-    let event_loop = EventLoop::new();
+/// The one window, which is either the full app or the floating compact strip.
+struct Shell {
+    window: Window,
+    settings: Settings,
+    /// `None` when there is no data directory; preferences then last one run.
+    settings_path: Option<PathBuf>,
+    /// The full window's shape while compact; `None` means not compact.
+    restore: Option<Restore>,
+}
+
+struct Restore {
+    size: PhysicalSize<u32>,
+    position: Option<PhysicalPosition<i32>>,
+    maximized: bool,
+}
+
+impl Shell {
+    fn handle(&mut self, message: IpcMessage) {
+        match message {
+            IpcMessage::Compact => self.compact(),
+            IpcMessage::Expand => self.expand(),
+            IpcMessage::Drag => {
+                if self.restore.is_some() {
+                    let _ = self.window.drag_window();
+                }
+            }
+            IpcMessage::SetCompactOnStart { value } => {
+                self.settings.compact_on_start = value;
+                self.save_settings();
+            }
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.restore.is_some() {
+            return;
+        }
+        let w = &self.window;
+        let maximized = w.is_maximized();
+        if maximized {
+            w.set_maximized(false);
+        }
+        self.restore = Some(Restore { size: w.inner_size(), position: w.outer_position().ok(), maximized });
+
+        let size = LogicalSize::new(COMPACT_SIZE.0, COMPACT_SIZE.1);
+        w.set_decorations(false);
+        #[cfg(windows)]
+        w.set_undecorated_shadow(true);
+        w.set_min_inner_size(Some(size));
+        w.set_inner_size(size);
+        w.set_resizable(false);
+        w.set_always_on_top(true);
+
+        let monitor = |m: tao::monitor::MonitorHandle| Monitor {
+            x: m.position().x,
+            y: m.position().y,
+            width: m.size().width,
+            height: m.size().height,
+            scale: m.scale_factor(),
+        };
+        if let Some(current) = w.current_monitor().or_else(|| w.primary_monitor()).map(monitor) {
+            let all: Vec<Monitor> = w.available_monitors().map(monitor).collect();
+            let physical = size.to_physical::<u32>(current.scale);
+            let (x, y) = place(self.settings.compact_position, (physical.width, physical.height), current, &all);
+            w.set_outer_position(PhysicalPosition::new(x, y));
+        }
+    }
+
+    fn expand(&mut self) {
+        let Some(restore) = self.restore.take() else { return };
+        self.remember_compact_position();
+        let w = &self.window;
+        w.set_always_on_top(false);
+        w.set_resizable(true);
+        w.set_decorations(true);
+        w.set_min_inner_size(Some(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1)));
+        w.set_inner_size(restore.size);
+        if let Some(position) = restore.position {
+            w.set_outer_position(position);
+        }
+        if restore.maximized {
+            w.set_maximized(true);
+        }
+        w.set_focus();
+    }
+
+    fn remember_compact_position(&mut self) {
+        if let Ok(p) = self.window.outer_position() {
+            self.settings.compact_position = Some((p.x, p.y));
+            self.save_settings();
+        }
+    }
+
+    fn save_settings(&self) {
+        if let Some(path) = &self.settings_path
+            && let Err(e) = self.settings.save(path)
+        {
+            warn!("saving settings: {e:#}");
+        }
+    }
+}
+
+fn run_window(content: Content, settings_path: Option<PathBuf>) -> anyhow::Result<()> {
+    let settings = settings_path.as_deref().map(Settings::load).unwrap_or_default();
+    let event_loop = EventLoopBuilder::<IpcMessage>::with_user_event().build();
     let icon = Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).ok();
     let window = WindowBuilder::new()
         .with_title("Harmony")
-        .with_inner_size(LogicalSize::new(960.0, 720.0))
-        .with_min_inner_size(LogicalSize::new(480.0, 400.0))
+        .with_inner_size(LogicalSize::new(FULL_SIZE.0, FULL_SIZE.1))
+        .with_min_inner_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
         .with_window_icon(icon)
         .build(&event_loop)
         .context("creating the window")?;
 
+    // The page learns it is inside the desktop window (and its saved
+    // preferences) before its own scripts run, and talks back over `window.ipc`.
+    let init = serde_json::json!({ "compactOnStart": settings.compact_on_start });
+    let proxy = event_loop.create_proxy();
     let builder = WebViewBuilder::new()
         .with_background_color(BACKGROUND)
-        .with_devtools(cfg!(debug_assertions));
+        .with_devtools(cfg!(debug_assertions))
+        .with_initialization_script(format!("window.__HARMONY_DESKTOP__ = {init};"))
+        .with_ipc_handler(move |request| {
+            if let Some(message) = ipc::parse(request.body()) {
+                let _ = proxy.send_event(message);
+            }
+        });
     let builder = match content {
         Content::Url(url) => builder.with_url(url),
         Content::Error(html) => builder.with_html(html),
     };
     let webview = builder.build(&window).context("creating the webview (is the WebView2 runtime installed?)")?;
 
+    let mut shell = Shell { window, settings, settings_path, restore: None };
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         // Keep the webview alive for as long as the loop runs.
         let _keep = &webview;
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
-            info!("window closed");
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::UserEvent(message) => shell.handle(message),
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                if shell.restore.is_some() {
+                    shell.remember_compact_position();
+                }
+                info!("window closed");
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
         }
     });
 }

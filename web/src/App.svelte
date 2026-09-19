@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { app, refresh, startClock, dismissError } from './lib/state.svelte';
+  import { desktop, enterCompact, setCompactOnStart } from './lib/desktop.svelte';
   import Timer from './components/Timer.svelte';
+  import CompactTimer from './components/CompactTimer.svelte';
   import SessionList from './components/SessionList.svelte';
   import ProjectsView from './components/ProjectsView.svelte';
   import ReportView from './components/ReportView.svelte';
@@ -19,41 +21,69 @@
     location.hash = tab;
   });
 
+  // Collapse into the floating strip when a session starts. A session that was
+  // already running when the app opened doesn't count.
+  let lastActive: string | null | undefined;
+  $effect(() => {
+    if (!app.view) return;
+    const active = app.view.active_session_id;
+    if (lastActive === null && active && desktop.compactOnStart) enterCompact();
+    lastActive = active;
+  });
+
   onMount(() => {
     void refresh();
     return startClock();
   });
 </script>
 
-<header class="top">
-  <div class="brand">
-    <span class="logo" aria-hidden="true"></span>
-    <h1>Harmony</h1>
-  </div>
-  <nav>
-    {#each tabs as t (t.id)}
-      <button class:active={tab === t.id} class="ghost" onclick={() => (tab = t.id)}>{t.label}</button>
-    {/each}
-  </nav>
-</header>
-
-{#if app.error}
-  <div class="error card" role="alert">
-    <span class="grow">{app.error}</span>
-    <button class="ghost" onclick={dismissError} aria-label="Dismiss">✕</button>
-  </div>
-{/if}
-
-{#if !app.loaded}
-  <p class="muted">Loading…</p>
+{#if desktop.compact}
+  <CompactTimer />
 {:else}
-  <Timer />
-  {#if tab === 'sessions'}
-    <SessionList />
-  {:else if tab === 'projects'}
-    <ProjectsView />
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <h1>Harmony</h1>
+    </div>
+    <nav>
+      {#each tabs as t (t.id)}
+        <button class:active={tab === t.id} class="ghost" onclick={() => (tab = t.id)}>{t.label}</button>
+      {/each}
+    </nav>
+  </header>
+
+  {#if desktop.available}
+    <div class="float row muted">
+      <label class="row">
+        <input
+          type="checkbox"
+          checked={desktop.compactOnStart}
+          onchange={(e) => setCompactOnStart(e.currentTarget.checked)}
+        />
+        Float compact while a session runs
+      </label>
+      <button class="ghost" onclick={enterCompact} title="Collapse into the floating compact window">⤡ Compact</button>
+    </div>
+  {/if}
+
+  {#if app.error}
+    <div class="error card" role="alert">
+      <span class="grow">{app.error}</span>
+      <button class="ghost" onclick={dismissError} aria-label="Dismiss">✕</button>
+    </div>
+  {/if}
+
+  {#if !app.loaded}
+    <p class="muted">Loading…</p>
   {:else}
-    <ReportView />
+    <Timer />
+    {#if tab === 'sessions'}
+      <SessionList />
+    {:else if tab === 'projects'}
+      <ProjectsView />
+    {:else}
+      <ReportView />
+    {/if}
   {/if}
 {/if}
 
@@ -86,6 +116,15 @@
   nav button.active {
     color: var(--text);
     background: var(--surface-2);
+  }
+  .float {
+    justify-content: flex-end;
+    margin: -8px 0 10px;
+    font-size: 13px;
+  }
+  .float label {
+    gap: 6px;
+    cursor: pointer;
   }
   .error {
     display: flex;
