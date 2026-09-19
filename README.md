@@ -106,6 +106,13 @@ cargo build --release -p harmony-desktop          # -> target/release/harmony-de
   `~/Library/Application Support/Harmony` on macOS).
 - `harmony-desktop --url http://localhost:31415` skips the embedded server and
   just shows a running instance, e.g. the Docker one.
+- **Compact mode**: the `⤡ Compact` button collapses the window into a small
+  borderless strip that floats above other windows, showing the project, the
+  session clock, the task total and Start/Stop. Drag it anywhere by its body;
+  `⤢` brings the full window back. Tick *Float compact while a session runs*
+  to collapse automatically on Start. The preference and the strip's position
+  are kept in `desktop-settings.json` in the local data folder above, whatever
+  `HARMONY_STORAGE` says (they belong to this machine, not to the data).
 - Release builds hide the console and log to `harmony-desktop.log` in that
   data folder. If startup fails, the window shows the error and the log path.
 - Windows 11 ships the WebView2 runtime; on older Windows install it from
