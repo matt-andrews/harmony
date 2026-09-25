@@ -24,6 +24,9 @@ RUN mkdir -p src desktop/src \
 
 COPY src ./src
 COPY --from=web /web/dist ./web/dist
+# The release tag version CI passes in; shown in the UI. Unset -> "dev".
+ARG PACKAGE_VERSION
+ENV HARMONY_VERSION=${PACKAGE_VERSION:-dev}
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked -p harmony
 
 # ---- runtime ---------------------------------------------------------------

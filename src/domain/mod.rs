@@ -5,5 +5,5 @@ pub mod ops;
 pub mod palette;
 pub mod views;
 
-pub use model::{AppData, Project, Session, Task};
-pub use ops::{Assignment, DomainError, ProjectPatch, SessionPatch};
+pub use model::{AppData, Project, Session, Settings, Task};
+pub use ops::{Assignment, DomainError, ProjectPatch, SessionPatch, SettingsPatch};

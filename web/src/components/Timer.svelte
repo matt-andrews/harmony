@@ -52,12 +52,18 @@
     const p = nextProject;
     if (!p) return null;
     if (p.current_task_number === null) return 'task #1';
-    if (nextChoice.kind === 'project' && nextChoice.newTask) return `task #${p.current_task_number + 1} (new)`;
+    // A turned-in task is closed: Start opens the next one by itself.
+    if ((nextChoice.kind === 'project' && nextChoice.newTask) || p.current_task_completed_at) {
+      return `task #${p.current_task_number + 1} (new)`;
+    }
     return `task #${p.current_task_number} · ${fmtTaskTotal(p.current_task_total_secs ?? 0)} so far`;
   });
-  /** "New task" only makes sense once the project has a task to move on from. */
+  /** "New task" only makes sense once the project has an open task to move on from. */
   const canStartNewTask = $derived(
-    nextChoice?.kind === 'project' && !nextChoice.newTask && nextProject?.current_task_number != null,
+    nextChoice?.kind === 'project' &&
+      !nextChoice.newTask &&
+      nextProject?.current_task_number != null &&
+      nextProject.current_task_completed_at === null,
   );
 </script>
 

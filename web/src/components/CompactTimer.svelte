@@ -21,6 +21,7 @@
     if (running) return running.task_number === null ? null : `task #${running.task_number}`;
     if (!project) return null;
     if (project.current_task_number === null) return 'task #1';
+    if (project.current_task_completed_at) return `task #${project.current_task_number + 1} (new)`;
     return `task #${project.current_task_number} · ${fmtTaskTotal(project.current_task_total_secs ?? 0)} so far`;
   });
 

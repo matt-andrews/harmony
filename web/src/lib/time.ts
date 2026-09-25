@@ -76,6 +76,12 @@ export function fmtDate(d: Date | string): string {
   return dateFmt.format(typeof d === 'string' ? new Date(d) : d);
 }
 
+const monthDayFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+/** "Sep 24", for badges where the year is noise. */
+export function fmtMonthDay(d: Date | string): string {
+  return monthDayFmt.format(typeof d === 'string' ? new Date(d) : d);
+}
+
 export function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
@@ -104,6 +110,20 @@ export function fromLocalInput(value: string): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/** "YYYY-MM-DD" (a calendar date) -> local midnight. `new Date(str)` would read it as UTC. */
+export function parseLocalDate(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Local calendar date -> value for <input type="date">. */
+export function toDateInput(d: Date | null): string {
+  return d ? dayKey(d) : '';
+}
+
 // ----- reporting periods --------------------------------------------------
 
 export type PeriodKind = 'week' | 'biweek' | 'month' | 'year';
@@ -115,70 +135,56 @@ export interface Period {
   label: string;
 }
 
+/** What anchors the report calendar: a date a pay cycle starts on, or nothing (Monday weeks). */
+export interface Cycle {
+  start: Date | null;
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** Monday 00:00 of the week containing `d`. */
-export function startOfWeek(d: Date): Date {
+/** 00:00 of the most recent `weekStart` (a getDay() value, 0 = Sunday) on or before `d`. */
+export function startOfWeek(d: Date, weekStart = 1): Date {
   const day = startOfDay(d);
-  const dow = (day.getDay() + 6) % 7; // Mon=0 .. Sun=6
+  const dow = (day.getDay() - weekStart + 7) % 7;
   day.setDate(day.getDate() - dow);
   return day;
 }
 
-function addDays(d: Date, n: number): Date {
+/** Calendar days, DST-safe (setDate keeps the local wall clock). */
+export function addDays(d: Date, n: number): Date {
   const r = new Date(d);
   r.setDate(r.getDate() + n);
   return r;
 }
 
-const BIWEEK_ANCHOR_KEY = 'harmony.biweekAnchor';
-
-/** The Monday that starts a biweekly cycle. Defaults to this week's Monday. */
-export function biweekAnchor(): Date {
-  try {
-    const stored = localStorage.getItem(BIWEEK_ANCHOR_KEY);
-    if (stored) {
-      const d = new Date(stored);
-      if (!isNaN(d.getTime())) return startOfWeek(d);
-    }
-  } catch {
-    /* storage unavailable */
-  }
-  return startOfWeek(new Date());
+/** Whole weeks from `a` to `b`, both week starts; DST makes the quotient inexact, so round. */
+function weeksBetween(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / (7 * 86400000));
 }
 
-export function setBiweekAnchor(d: Date): void {
-  try {
-    localStorage.setItem(BIWEEK_ANCHOR_KEY, startOfWeek(d).toISOString());
-  } catch {
-    /* ignore */
-  }
-}
-
-const rangeFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
 
 /** Period `offset` steps away from the one containing `now` (0 = current, -1 = previous). */
-export function period(kind: PeriodKind, offset: number, now = new Date()): Period {
+export function period(kind: PeriodKind, offset: number, cycle: Cycle, now = new Date()): Period {
+  const weekStart = cycle.start?.getDay() ?? 1;
   let from: Date;
   let to: Date;
   let label: string;
   switch (kind) {
     case 'week': {
-      from = addDays(startOfWeek(now), offset * 7);
+      from = addDays(startOfWeek(now, weekStart), offset * 7);
       to = addDays(from, 7);
-      label = `${rangeFmt.format(from)} – ${rangeFmt.format(addDays(to, -1))}`;
+      label = `${monthDayFmt.format(from)} – ${monthDayFmt.format(addDays(to, -1))}`;
       break;
     }
     case 'biweek': {
-      const anchor = biweekAnchor();
-      const weeksSince = Math.floor((startOfWeek(now).getTime() - anchor.getTime()) / (7 * 86400000));
-      const cycle = Math.floor(weeksSince / 2) + offset;
-      from = addDays(anchor, cycle * 14);
+      const anchor = cycle.start ?? startOfWeek(now, weekStart);
+      const cycleIndex = Math.floor(weeksBetween(anchor, startOfWeek(now, weekStart)) / 2) + offset;
+      from = addDays(anchor, cycleIndex * 14);
       to = addDays(from, 14);
-      label = `${rangeFmt.format(from)} – ${rangeFmt.format(addDays(to, -1))}`;
+      label = `${monthDayFmt.format(from)} – ${monthDayFmt.format(addDays(to, -1))}`;
       break;
     }
     case 'month': {
@@ -195,4 +201,12 @@ export function period(kind: PeriodKind, offset: number, now = new Date()): Peri
     }
   }
   return { kind, from, to, label };
+}
+
+/**
+ * Tasks turned in inside this window become withdrawable inside `p`: the
+ * period shifted back by the payout delay, in local calendar days.
+ */
+export function completionWindow(p: Period, delayDays: number): { from: Date; to: Date } {
+  return { from: addDays(p.from, -delayDays), to: addDays(p.to, -delayDays) };
 }

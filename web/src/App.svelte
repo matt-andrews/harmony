@@ -16,6 +16,12 @@
   ];
 
   let tab = $state<Tab>((location.hash.slice(1) as Tab) || 'sessions');
+
+  // "v0.5.0" from a release tag; anything else (a local build) is just "dev".
+  const version = $derived.by(() => {
+    const v = app.view?.app_version;
+    return v && v !== 'dev' ? `v${v}` : 'dev';
+  });
   $effect(() => {
     if (!tabs.some((t) => t.id === tab)) tab = 'sessions';
     location.hash = tab;
@@ -84,6 +90,9 @@
     {:else}
       <ReportView />
     {/if}
+    <div class="version muted mono" title="Harmony version">
+      {version}
+    </div>
   {/if}
 {/if}
 
@@ -134,5 +143,14 @@
     margin-bottom: 12px;
     border-color: var(--danger);
     color: var(--danger);
+  }
+  .version {
+    position: fixed;
+    right: 10px;
+    bottom: 8px;
+    font-size: 11px;
+    opacity: 0.6;
+    pointer-events: none;
+    user-select: none;
   }
 </style>

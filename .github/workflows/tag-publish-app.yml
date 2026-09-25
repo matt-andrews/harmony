@@ -107,6 +107,11 @@ jobs:
           key: desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: desktop-${{ runner.os }}-
 
+      # Baked into the binary and shown in the UI's corner.
+      - name: Set app version from the tag
+        shell: bash
+        run: echo "HARMONY_VERSION=${GITHUB_REF_NAME#app/v}" >> "$GITHUB_ENV"
+
       - name: Build desktop
         run: cargo build --release --locked -p harmony-desktop
 

@@ -2,13 +2,16 @@
 //! single `harmony.json` document, so changes must stay backward compatible
 //! (or bump `DATA_VERSION` and migrate).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::palette::migrate_color;
 
 /// 2: project colours moved to the Catppuccin palette.
+///
+/// Later additions (`Task::completed`, `AppData::settings`) are optional with
+/// defaults, so they didn't need a bump.
 pub const DATA_VERSION: u32 = 2;
 
 /// A reusable label: a client / gig you can pick up repeatedly.
@@ -33,6 +36,30 @@ pub struct Task {
     /// 1-based, sequential per project.
     pub number: u32,
     pub created_at: DateTime<Utc>,
+    /// Turned in. The completion *time* is derived: the task's last session end.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub completed: bool,
+}
+
+/// User preferences that travel with the data (unlike the desktop window
+/// settings, which belong to one machine).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// A date on which a pay cycle begins; its weekday is the week start for
+    /// reports. `None` means Monday-based weeks and a cycle starting this week.
+    pub cycle_start: Option<NaiveDate>,
+    /// Days after a task is turned in before its pay can be withdrawn.
+    pub payout_delay_days: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            cycle_start: None,
+            payout_delay_days: 7,
+        }
+    }
 }
 
 /// A contiguous block of work. `ended_at == None` means it is running.
@@ -74,6 +101,8 @@ pub struct AppData {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub sessions: Vec<Session>,
+    #[serde(default)]
+    pub settings: Settings,
 }
 
 /// Documents written before the field existed are version 1.
@@ -88,6 +117,7 @@ impl Default for AppData {
             projects: Vec::new(),
             tasks: Vec::new(),
             sessions: Vec::new(),
+            settings: Settings::default(),
         }
     }
 }
@@ -144,6 +174,46 @@ mod tests {
     fn old_document_without_version_defaults() {
         let back: AppData = serde_json::from_str(r#"{"projects":[],"tasks":[],"sessions":[]}"#).unwrap();
         assert_eq!(back.version, 1);
+        assert_eq!(back.settings, Settings::default());
+        assert_eq!(back.settings.payout_delay_days, 7);
+    }
+
+    #[test]
+    fn partial_settings_and_tasks_fill_in_defaults() {
+        let back: AppData = serde_json::from_str(
+            r#"{"tasks":[{"id":"6f4b1c2e-1111-4111-8111-111111111111","project_id":"6f4b1c2e-2222-4222-8222-222222222222","number":1,"created_at":"2026-09-16T00:00:00Z"}],
+                "settings":{"cycle_start":"2026-09-24"}}"#,
+        )
+        .unwrap();
+        assert!(!back.tasks[0].completed);
+        assert_eq!(back.settings.payout_delay_days, 7, "container default, not u32::default");
+        assert_eq!(
+            back.settings.cycle_start,
+            Some(NaiveDate::from_ymd_opt(2026, 9, 24).unwrap())
+        );
+    }
+
+    #[test]
+    fn settings_and_completed_round_trip() {
+        let mut d = AppData::default();
+        d.settings.cycle_start = NaiveDate::from_ymd_opt(2026, 9, 24);
+        d.settings.payout_delay_days = 10;
+        d.tasks.push(Task {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            number: 1,
+            created_at: Utc::now(),
+            completed: false,
+        });
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(!json.contains("\"completed\""), "false is omitted: {json}");
+        let back: AppData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, d);
+
+        d.tasks[0].completed = true;
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"completed\":true"));
+        assert_eq!(serde_json::from_str::<AppData>(&json).unwrap(), d);
     }
 
     fn with_colors(version: u32, colors: &[&str]) -> AppData {

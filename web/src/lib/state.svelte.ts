@@ -2,7 +2,7 @@
 // replaces `app.view`, so the UI never has to patch local copies.
 
 import * as api from './api';
-import type { ProjectView, SessionView, StateView, UpdateProject, UpdateSession } from './api';
+import type { ProjectView, SessionView, StateView, UpdateProject, UpdateSession, UpdateSettings } from './api';
 
 export type PickChoice =
   | { kind: 'project'; projectId: string; newTask: boolean }
@@ -135,6 +135,26 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function updateProject(projectId: string, patch: UpdateProject): Promise<boolean> {
   const ok = await run(async () => {
     app.view = await api.updateProject(projectId, patch);
+    return true;
+  });
+  return ok === true;
+}
+
+export async function completeTask(taskId: string): Promise<void> {
+  await run(async () => {
+    app.view = await api.completeTask(taskId);
+  });
+}
+
+export async function reopenTask(taskId: string): Promise<void> {
+  await run(async () => {
+    app.view = await api.reopenTask(taskId);
+  });
+}
+
+export async function updateSettings(patch: UpdateSettings): Promise<boolean> {
+  const ok = await run(async () => {
+    app.view = await api.updateSettings(patch);
     return true;
   });
   return ok === true;
