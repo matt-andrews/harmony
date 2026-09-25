@@ -21,8 +21,22 @@ Tagging a session with a project appends it to the project's current (latest)
 task. Tick **New task** in the picker to start a fresh one. Tasks that end up
 with no sessions (after retagging or deleting) are pruned automatically.
 
+A task is **done** once you turn it in: press *Done* on its latest session
+card. Starting a new task on the same project marks the previous one done
+by itself. A done task is closed, so *Start* on that project opens the next
+task without asking; *Reopen* takes it back. The completion time is the
+task's last session end, which is what the payout report goes by.
+
 Pay is `hours × the project's current rate`. Rates are not versioned, so
-changing a rate re-prices that project's history.
+changing a rate re-prices that project's history, past payouts included.
+
+The **Report** tab has a pay-cycle calendar: pick the date a cycle starts on
+and *Week* / *2 Weeks* line up with it. It also shows the **payout** for the
+period, i.e. the tasks whose pay becomes withdrawable in it, given the number
+of days pay takes to finalize after a task is done (default 7). Both settings
+are stored with the data, so they follow you between the desktop app and
+Docker. The version in the bottom-right corner is the release tag; local
+builds say `dev`.
 
 ## Running it
 
@@ -70,7 +84,9 @@ Open <http://localhost:31415>. The compose file mounts `./data` at `/data`
 inside the container, so `HARMONY_STORAGE=file:/data` in `.env` keeps the
 data on the host at `./data/harmony.json`; with a `sas:` value the mount is
 simply unused. The image is a multi-stage build (Node builds the frontend,
-Rust embeds it, Debian slim runs it as a non-root user).
+Rust embeds it, Debian slim runs it as a non-root user). CI passes the release
+tag as the `PACKAGE_VERSION` build-arg, which becomes the version shown in
+the UI; a plain `docker compose up --build` shows `dev`.
 
 ### 3. Local development
 
@@ -115,6 +131,8 @@ cargo build --release -p harmony-desktop          # -> target/release/harmony-de
   `HARMONY_STORAGE` says (they belong to this machine, not to the data).
 - Release builds hide the console and log to `harmony-desktop.log` in that
   data folder. If startup fails, the window shows the error and the log path.
+- The UI shows the version from the `HARMONY_VERSION` environment variable
+  *at compile time* (CI sets it from the tag); a local build shows `dev`.
 - Windows 11 ships the WebView2 runtime; on older Windows install it from
   Microsoft. `scripts/make-icons.py` regenerates the icons if you change the mark.
 
@@ -133,10 +151,11 @@ or container:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "projects": [{ "id": "…", "name": "contoso", "hourly_rate": 40.0, "color": "#f5a97f", "created_at": "…", "archived": false }],
-  "tasks":    [{ "id": "…", "project_id": "…", "number": 1, "created_at": "…" }],
-  "sessions": [{ "id": "…", "task_id": "…", "started_at": "…", "ended_at": "…", "note": "…" }]
+  "tasks":    [{ "id": "…", "project_id": "…", "number": 1, "created_at": "…", "completed": true }],
+  "sessions": [{ "id": "…", "task_id": "…", "started_at": "…", "ended_at": "…", "note": "…" }],
+  "settings": { "cycle_start": "2026-09-24", "payout_delay_days": 7 }
 }
 ```
 
@@ -162,7 +181,15 @@ replace what it has.
 | POST | `/api/sessions/stop` | — |
 | PATCH | `/api/sessions/{id}` | `{project_id?: uuid\|null, new_task?, task_id?, started_at?, ended_at?: iso\|null, note?}` |
 | DELETE | `/api/sessions/{id}` | — |
-| GET | `/api/report?from=<iso>&to=<iso>` | — |
+| POST | `/api/tasks/{id}/complete` | — |
+| POST | `/api/tasks/{id}/reopen` | — |
+| PATCH | `/api/settings` | `{cycle_start?: "YYYY-MM-DD"\|null, payout_delay_days?}` |
+| GET | `/api/report?from=<iso>&to=<iso>[&completed_from=<iso>&completed_to=<iso>]` | — |
+
+The report's optional `completed_*` window selects the tasks whose pay is
+withdrawable in `[from, to)`; the UI sends the period shifted back by the
+payout delay. Tasks done after the window but before `to` come back as
+"carried" to the next payout.
 
 ## Tests
 

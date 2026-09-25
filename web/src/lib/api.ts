@@ -12,6 +12,8 @@ export interface ProjectView {
   task_count: number;
   current_task_number: number | null;
   current_task_total_secs: number | null;
+  /** Set when the current task is turned in: the next Start opens a new one. */
+  current_task_completed_at: string | null;
 }
 
 export interface SessionView {
@@ -29,14 +31,26 @@ export interface SessionView {
   ordinal: number | null;
   task_session_count: number | null;
   task_total_secs: number | null;
+  /** When the task was turned in (its last session end), if it was. */
+  task_completed_at: string | null;
+}
+
+export interface Settings {
+  /** "YYYY-MM-DD": a day a pay cycle starts on; its weekday starts report weeks. */
+  cycle_start: string | null;
+  /** Days after a task is turned in before its pay can be withdrawn. */
+  payout_delay_days: number;
 }
 
 export interface StateView {
   server_time: string;
+  /** Release tag version, or "dev". */
+  app_version: string;
   active_session_id: string | null;
   resume_project_id: string | null;
   projects: ProjectView[];
   sessions: SessionView[];
+  settings: Settings;
 }
 
 export interface TaskSummary {
@@ -48,6 +62,7 @@ export interface TaskSummary {
   total_pay: number;
   first_started: string | null;
   last_ended: string | null;
+  completed_at: string | null;
 }
 
 export interface ProjectSummary extends ProjectView {
@@ -63,12 +78,34 @@ export interface ReportRow {
   total_pay: number;
 }
 
+export interface PayoutRow {
+  task_id: string;
+  project_id: string;
+  project_name: string;
+  color: string;
+  task_number: number;
+  completed_at: string;
+  total_secs: number;
+  total_pay: number;
+}
+
 export interface Report {
   from: string;
   to: string;
   rows: ReportRow[];
   total_secs: number;
   total_pay: number;
+  /** Tasks turned in inside the completion window: withdrawable this period. */
+  payout_rows: PayoutRow[];
+  payout_total_pay: number;
+  /** Turned in this period but after the window: they pay out next period. */
+  carried_rows: PayoutRow[];
+  carried_total_pay: number;
+}
+
+export interface UpdateSettings {
+  cycle_start?: string | null;
+  payout_delay_days?: number;
 }
 
 export interface UpdateProject {
@@ -139,8 +176,18 @@ export const updateSession = (id: string, patch: UpdateSession) =>
 
 export const deleteSession = (id: string) => request<StateView>('DELETE', `/api/sessions/${id}`);
 
-export const getReport = (from: Date, to: Date) =>
-  request<Report>(
-    'GET',
-    `/api/report?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
-  );
+export const completeTask = (id: string) => request<StateView>('POST', `/api/tasks/${id}/complete`);
+
+export const reopenTask = (id: string) => request<StateView>('POST', `/api/tasks/${id}/reopen`);
+
+export const updateSettings = (patch: UpdateSettings) => request<StateView>('PATCH', '/api/settings', patch);
+
+/** `completed` is the completion window whose tasks pay out inside [from, to). */
+export const getReport = (from: Date, to: Date, completed?: { from: Date; to: Date }) => {
+  const q = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  if (completed) {
+    q.set('completed_from', completed.from.toISOString());
+    q.set('completed_to', completed.to.toISOString());
+  }
+  return request<Report>('GET', `/api/report?${q}`);
+};

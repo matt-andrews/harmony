@@ -13,3 +13,10 @@ pub mod frontend;
 pub mod storage;
 
 pub use api::{AppState, router};
+
+/// What the UI shows in its corner: the release tag version that CI injects
+/// at compile time (`HARMONY_VERSION`), or `dev` for any other build.
+pub const VERSION: &str = match option_env!("HARMONY_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => "dev",
+};

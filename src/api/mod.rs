@@ -4,6 +4,8 @@
 mod projects;
 mod report;
 mod sessions;
+mod settings;
+mod tasks;
 
 use std::sync::Arc;
 
@@ -80,6 +82,9 @@ pub fn router(state: SharedState) -> Router {
             "/api/sessions/{id}",
             axum::routing::patch(sessions::update).delete(sessions::delete),
         )
+        .route("/api/tasks/{id}/complete", post(tasks::complete))
+        .route("/api/tasks/{id}/reopen", post(tasks::reopen))
+        .route("/api/settings", axum::routing::patch(settings::update))
         .fallback(crate::frontend::serve)
         .layer(TraceLayer::new_for_http())
         .with_state(state)

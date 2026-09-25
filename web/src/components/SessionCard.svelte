@@ -1,7 +1,17 @@
 <script lang="ts">
   import type { SessionView, UpdateSession } from '../lib/api';
-  import { app, elapsedSecs, livePay, taskTotalSecs, tagSession, updateSession, deleteSession } from '../lib/state.svelte';
-  import { fmtExact, fmtMoney, fmtTaskTotal, fmtTime, fromLocalInput, toLocalInput } from '../lib/time';
+  import {
+    app,
+    completeTask,
+    deleteSession,
+    elapsedSecs,
+    livePay,
+    reopenTask,
+    tagSession,
+    taskTotalSecs,
+    updateSession,
+  } from '../lib/state.svelte';
+  import { fmtDate, fmtExact, fmtMoney, fmtMonthDay, fmtTaskTotal, fmtTime, fromLocalInput, toLocalInput } from '../lib/time';
   import ProjectPicker from './ProjectPicker.svelte';
 
   interface Props {
@@ -12,6 +22,9 @@
   const projects = $derived(app.view?.projects ?? []);
   const active = $derived(session.ended_at === null);
   const isFirst = $derived(session.ordinal === 1);
+  // The task is turned in (or not) from its latest session only.
+  const isLast = $derived(session.ordinal !== null && session.ordinal === session.task_session_count);
+  const done = $derived(session.task_completed_at !== null);
 
   let editing = $state(false);
   let startInput = $state('');
@@ -66,8 +79,24 @@
         {#if isFirst}
           <span class="badge">new task</span>
         {/if}
+        {#if done && isLast && session.task_completed_at}
+          <span class="badge done" title="Turned in {fmtDate(session.task_completed_at)} {fmtTime(session.task_completed_at)}">
+            ✓ done {fmtMonthDay(session.task_completed_at)}
+          </span>
+        {/if}
       {/if}
       <span class="grow"></span>
+      {#if isLast && !active && session.task_id}
+        {#if done}
+          <button class="ghost" onclick={() => reopenTask(session.task_id!)} disabled={app.busy} title="Reopen task #{session.task_number}">
+            Reopen
+          </button>
+        {:else}
+          <button class="ghost" onclick={() => completeTask(session.task_id!)} disabled={app.busy} title="Mark task #{session.task_number} turned in">
+            Done
+          </button>
+        {/if}
+      {/if}
       <button class="ghost" onclick={editing ? () => (editing = false) : beginEdit} aria-label="Edit times">
         {editing ? 'Cancel' : 'Edit'}
       </button>
@@ -113,7 +142,6 @@
   .session {
     display: flex;
     overflow: visible;
-    margin-bottom: 8px;
   }
   .session.active {
     border-color: var(--band);
@@ -151,6 +179,10 @@
     border: 1px solid var(--band);
     border-radius: 4px;
     padding: 1px 6px;
+  }
+  .badge.done {
+    color: var(--ok);
+    border-color: var(--ok);
   }
   .times {
     flex-wrap: wrap;

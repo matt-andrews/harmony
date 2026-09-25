@@ -113,7 +113,9 @@
   function nextTaskLabel(p: ProjectView): string {
     const cur = p.current_task_number;
     if (cur === null) return 'task #1';
-    return newTask ? `→ task #${cur + 1}` : `task #${cur}`;
+    // A turned-in task is closed, so picking the project starts the next one.
+    if (newTask || p.current_task_completed_at) return `→ task #${cur + 1}`;
+    return `task #${cur}`;
   }
 </script>
 

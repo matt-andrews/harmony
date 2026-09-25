@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::model::{AppData, Project, Session, pay_for, round_cents};
+use super::model::{AppData, Project, Session, Settings, Task, pay_for, round_cents};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectView {
@@ -17,6 +17,8 @@ pub struct ProjectView {
     pub current_task_number: Option<u32>,
     /// Time logged so far on the current task, running session included.
     pub current_task_total_secs: Option<i64>,
+    /// Set when the current task is turned in: the next Start opens a new one.
+    pub current_task_completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,17 +39,21 @@ pub struct SessionView {
     pub task_session_count: Option<u32>,
     /// Sum over every session of this session's task, itself included.
     pub task_total_secs: Option<i64>,
+    /// When the task was turned in (its last session end), if it was.
+    pub task_completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StateView {
     pub server_time: DateTime<Utc>,
+    pub app_version: &'static str,
     pub active_session_id: Option<Uuid>,
     /// Project of the most recent tagged session: what Start resumes by default.
     pub resume_project_id: Option<Uuid>,
     pub projects: Vec<ProjectView>,
     /// Newest first.
     pub sessions: Vec<SessionView>,
+    pub settings: Settings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +66,7 @@ pub struct TaskSummary {
     pub total_pay: f64,
     pub first_started: Option<DateTime<Utc>>,
     pub last_ended: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +87,19 @@ pub struct ReportRow {
     pub total_pay: f64,
 }
 
+/// A turned-in task, priced whole: what one payout line is.
+#[derive(Debug, Clone, Serialize)]
+pub struct PayoutRow {
+    pub task_id: Uuid,
+    pub project_id: Uuid,
+    pub project_name: String,
+    pub color: String,
+    pub task_number: u32,
+    pub completed_at: DateTime<Utc>,
+    pub total_secs: i64,
+    pub total_pay: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub from: DateTime<Utc>,
@@ -87,6 +107,13 @@ pub struct Report {
     pub rows: Vec<ReportRow>,
     pub total_secs: i64,
     pub total_pay: f64,
+    /// Tasks completed inside the requested completion window: withdrawable
+    /// within `[from, to)`. Empty when no window was given.
+    pub payout_rows: Vec<PayoutRow>,
+    pub payout_total_pay: f64,
+    /// Tasks completed after the window but before `to`: they pay out next period.
+    pub carried_rows: Vec<PayoutRow>,
+    pub carried_total_pay: f64,
 }
 
 /// Seconds of `session` that fall inside `[from, to)`.
@@ -135,6 +162,7 @@ impl AppData {
             task_count: task_ids.len() as u32,
             current_task_number: current_task.map(|t| t.number),
             current_task_total_secs: current_task.map(|t| self.task_total_secs(t.id, now)),
+            current_task_completed_at: current_task.and_then(|t| self.task_completed_at(t)),
         }
     }
 
@@ -160,6 +188,7 @@ impl AppData {
             ordinal: ordinal.map(|(o, _)| o),
             task_session_count: ordinal.map(|(_, n)| n),
             task_total_secs: task.map(|t| self.task_total_secs(t.id, now)),
+            task_completed_at: task.and_then(|t| self.task_completed_at(t)),
         }
     }
 
@@ -182,10 +211,12 @@ impl AppData {
             .find(|id| projects.iter().any(|p| p.project.id == *id && !p.project.archived));
         StateView {
             server_time: now,
+            app_version: crate::VERSION,
             active_session_id: self.active_session().map(|s| s.id),
             resume_project_id,
             projects,
             sessions,
+            settings: self.settings.clone(),
         }
     }
 
@@ -210,7 +241,8 @@ impl AppData {
                     total_secs,
                     total_pay: pay_for(total_secs, project.hourly_rate),
                     first_started: sessions.first().map(|s| s.started_at),
-                    last_ended: sessions.iter().filter_map(|s| s.ended_at).max(),
+                    last_ended: self.task_last_ended(t.id),
+                    completed_at: self.task_completed_at(t),
                 }
             })
             .collect();
@@ -221,8 +253,53 @@ impl AppData {
         })
     }
 
+    fn payout_row(&self, task: &Task, completed_at: DateTime<Utc>, now: DateTime<Utc>) -> Option<PayoutRow> {
+        let project = self.project(task.project_id).ok()?;
+        let total_secs = self.task_total_secs(task.id, now);
+        Some(PayoutRow {
+            task_id: task.id,
+            project_id: project.id,
+            project_name: project.name.clone(),
+            color: project.color.clone(),
+            task_number: task.number,
+            completed_at,
+            total_secs,
+            total_pay: pay_for(total_secs, project.hourly_rate),
+        })
+    }
+
+    /// Turned-in tasks whose completion falls in `[from, to)`, oldest first.
+    fn payouts(&self, from: DateTime<Utc>, to: DateTime<Utc>, now: DateTime<Utc>) -> Vec<PayoutRow> {
+        let mut rows: Vec<PayoutRow> = self
+            .tasks
+            .iter()
+            .filter_map(|t| {
+                let done = self.task_completed_at(t)?;
+                if done < from || done >= to {
+                    return None;
+                }
+                self.payout_row(t, done, now)
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            a.completed_at
+                .cmp(&b.completed_at)
+                .then_with(|| a.project_name.to_lowercase().cmp(&b.project_name.to_lowercase()))
+        });
+        rows
+    }
+
     /// Totals for sessions overlapping `[from, to)`, clipped to the window.
-    pub fn report(&self, from: DateTime<Utc>, to: DateTime<Utc>, now: DateTime<Utc>) -> Report {
+    /// With `completed = Some((cf, ct))`, also the payout section: tasks turned
+    /// in within `[cf, ct)` are payable in this period, and those turned in
+    /// within `[ct, to)` are carried to the next one.
+    pub fn report(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        completed: Option<(DateTime<Utc>, DateTime<Utc>)>,
+        now: DateTime<Utc>,
+    ) -> Report {
         // Accumulate per project id (None = untagged): (id, count, secs).
         let mut acc: Vec<(Option<Uuid>, u32, i64)> = Vec::new();
         for s in &self.sessions {
@@ -266,12 +343,21 @@ impl AppData {
         });
         let total_secs = rows.iter().map(|r| r.total_secs).sum();
         let total_pay = round_cents(rows.iter().map(|r| r.total_pay).sum());
+        let (payout_rows, carried_rows) = match completed {
+            Some((cf, ct)) => (self.payouts(cf, ct, now), self.payouts(ct.max(from), to, now)),
+            None => (Vec::new(), Vec::new()),
+        };
+        let sum_pay = |rows: &[PayoutRow]| round_cents(rows.iter().map(|r| r.total_pay).sum());
         Report {
             from,
             to,
             rows,
             total_secs,
             total_pay,
+            payout_total_pay: sum_pay(&payout_rows),
+            payout_rows,
+            carried_total_pay: sum_pay(&carried_rows),
+            carried_rows,
         }
     }
 }
@@ -362,7 +448,7 @@ mod tests {
         let (d, a, b) = fixture();
         let now = t(9);
         // Window 2:00-4:30 catches 1h of alpha (2-3) and 30m of beta (4-4:30).
-        let r = d.report(t(2), t(4) + chrono::Duration::minutes(30), now);
+        let r = d.report(t(2), t(4) + chrono::Duration::minutes(30), None, now);
         assert_eq!(r.rows.len(), 2);
         assert_eq!(r.rows[0].project_id, Some(a));
         assert_eq!(r.rows[0].total_secs, 3600);
@@ -374,11 +460,75 @@ mod tests {
         assert_eq!(r.total_pay, 90.0);
 
         // Full day: untagged row is last, running session counts to `now`.
-        let r = d.report(t(0), t(23), now);
+        let r = d.report(t(0), t(23), None, now);
         assert_eq!(r.rows.last().unwrap().project_name, "Untagged");
         let alpha = r.rows.iter().find(|r| r.project_id == Some(a)).unwrap();
         assert_eq!(alpha.total_secs, 3 * 3600);
         assert_eq!(alpha.session_count, 2);
+        assert!(r.payout_rows.is_empty() && r.carried_rows.is_empty());
+    }
+
+    #[test]
+    fn report_payouts_follow_the_completion_window() {
+        let (mut d, a, b) = fixture();
+        d.stop_session(t(9)).unwrap(); // alpha task 2: 8-9
+        // Alpha task 1 (1-3, 2h @ $40) was auto-completed at t(3) when task 2
+        // started; turn in beta's task (4-5, 1h @ $100) and alpha task 2 (1h).
+        let beta_task = d.current_task(b).unwrap().id;
+        d.complete_task(beta_task).unwrap();
+        let alpha2 = d.current_task(a).unwrap().id;
+        d.complete_task(alpha2).unwrap();
+        let now = t(12);
+
+        // Period 6-12 with completion window 2-6: alpha #1 (done 3) and beta
+        // (done 5) pay out; alpha #2 (done 9) is carried.
+        let r = d.report(t(6), t(12), Some((t(2), t(6))), now);
+        let ids: Vec<_> = r.payout_rows.iter().map(|p| (p.task_number, p.completed_at)).collect();
+        assert_eq!(ids, vec![(1, t(3)), (1, t(5))], "oldest completion first");
+        assert_eq!(r.payout_rows[0].project_id, a);
+        assert_eq!(r.payout_rows[0].total_secs, 7200);
+        assert_eq!(r.payout_rows[0].total_pay, 80.0);
+        assert_eq!(r.payout_rows[1].total_pay, 100.0);
+        assert_eq!(r.payout_total_pay, 180.0);
+        assert_eq!(r.carried_rows.len(), 1);
+        assert_eq!(r.carried_rows[0].task_id, alpha2);
+        assert_eq!(r.carried_total_pay, 40.0);
+
+        // A rate change re-prices a past payout, like everything else.
+        use crate::domain::ops::ProjectPatch;
+        d.update_project(a, ProjectPatch { hourly_rate: Some(50.0), ..Default::default() }).unwrap();
+        let r = d.report(t(6), t(12), Some((t(2), t(6))), now);
+        assert_eq!(r.payout_rows[0].total_pay, 100.0);
+
+        // Reopening drops the task from every payout.
+        d.reopen_task(beta_task).unwrap();
+        let r = d.report(t(6), t(12), Some((t(2), t(6))), now);
+        assert_eq!(r.payout_rows.len(), 1);
+    }
+
+    #[test]
+    fn views_expose_completion_and_settings() {
+        let (mut d, a, _) = fixture();
+        d.settings.payout_delay_days = 3;
+        let v = d.state_view(t(9));
+        assert_eq!(v.app_version, crate::VERSION);
+        assert_eq!(v.settings.payout_delay_days, 3);
+        // Alpha task 1 was auto-completed when task 2 started (last end t(3)).
+        let old = v.sessions.iter().find(|s| s.task_number == Some(1) && s.project_id == Some(a)).unwrap();
+        assert_eq!(old.task_completed_at, Some(t(3)));
+        assert_eq!(v.sessions[0].task_completed_at, None, "running task 2 is open");
+        let alpha = v.projects.iter().find(|p| p.project.id == a).unwrap();
+        assert_eq!(alpha.current_task_completed_at, None);
+
+        d.stop_session(t(9)).unwrap();
+        let t2 = d.current_task(a).unwrap().id;
+        d.complete_task(t2).unwrap();
+        let v = d.state_view(t(10));
+        let alpha = v.projects.iter().find(|p| p.project.id == a).unwrap();
+        assert_eq!(alpha.current_task_completed_at, Some(t(9)));
+        let s = d.project_summary(a, t(10)).unwrap();
+        assert_eq!(s.tasks[0].completed_at, Some(t(9)));
+        assert_eq!(s.tasks[1].completed_at, Some(t(3)));
     }
 
     #[test]

@@ -96,7 +96,7 @@
         <span class="muted">·</span>
         <span class="muted">{p.task_count} {p.task_count === 1 ? 'task' : 'tasks'}</span>
         {#if p.current_task_number !== null}
-          <span class="chip">current: task #{p.current_task_number}</span>
+          <span class="chip">current: task #{p.current_task_number}{p.current_task_completed_at ? ' · done' : ''}</span>
         {/if}
         <span class="grow"></span>
         <button class="ghost" onclick={() => toggle(p)}>{expanded[p.id] ? 'Hide tasks' : 'Tasks'}</button>
@@ -111,7 +111,7 @@
         {@const summary = expanded[p.id] as ProjectSummary}
         <table class="tasks">
           <thead>
-            <tr><th>Task</th><th>Started</th><th>Last worked</th><th class="num">Sessions</th><th class="num">Time</th><th class="num">Pay</th></tr>
+            <tr><th>Task</th><th>Started</th><th>Last worked</th><th>Done</th><th class="num">Sessions</th><th class="num">Time</th><th class="num">Pay</th></tr>
           </thead>
           <tbody>
             {#each summary.tasks as t (t.id)}
@@ -119,6 +119,7 @@
                 <td>#{t.number}</td>
                 <td>{t.first_started ? `${fmtDate(t.first_started)} ${fmtTime(t.first_started)}` : '—'}</td>
                 <td>{t.last_ended ? `${fmtDate(t.last_ended)} ${fmtTime(t.last_ended)}` : 'running'}</td>
+                <td class:muted={!t.completed_at}>{t.completed_at ? fmtDate(t.completed_at) : 'open'}</td>
                 <td class="num">{t.session_count}</td>
                 <td class="num">{fmtTaskTotal(t.total_secs)}</td>
                 <td class="num">{fmtMoney(t.total_pay)}</td>

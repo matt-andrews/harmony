@@ -1,12 +1,15 @@
 //! Mutations on [`AppData`]. Every function validates and either applies
 //! the change or returns a [`DomainError`] leaving the data untouched.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::model::{AppData, Project, Session, Task};
+use super::model::{AppData, Project, Session, Settings, Task};
 use super::palette::{color_for_index, is_valid_hex_color};
+
+/// Longest payout delay accepted, in days. Generous; it only guards typos.
+pub const MAX_PAYOUT_DELAY_DAYS: u32 = 90;
 
 #[derive(Debug, Error, PartialEq)]
 pub enum DomainError {
@@ -47,6 +50,13 @@ pub struct SessionPatch {
     pub ended_at: Option<Option<DateTime<Utc>>>,
     /// `Some(None)` clears the note.
     pub note: Option<Option<String>>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SettingsPatch {
+    /// `Some(None)` clears the cycle start (back to Monday-based weeks).
+    pub cycle_start: Option<Option<NaiveDate>>,
+    pub payout_delay_days: Option<u32>,
 }
 
 fn normalize_name(name: &str) -> Result<String> {
@@ -95,6 +105,36 @@ impl AppData {
             .iter()
             .find(|t| t.id == id)
             .ok_or_else(|| DomainError::NotFound("task".into()))
+    }
+
+    fn task_mut(&mut self, id: Uuid) -> Result<&mut Task> {
+        self.tasks
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| DomainError::NotFound("task".into()))
+    }
+
+    /// When the task's work stopped: the latest session end. `None` while it
+    /// has no ended session.
+    pub fn task_last_ended(&self, task_id: Uuid) -> Option<DateTime<Utc>> {
+        self.sessions
+            .iter()
+            .filter(|s| s.task_id == Some(task_id))
+            .filter_map(|s| s.ended_at)
+            .max()
+    }
+
+    /// When the task was turned in, if it was: its last session end.
+    pub fn task_completed_at(&self, task: &Task) -> Option<DateTime<Utc>> {
+        if task.completed {
+            self.task_last_ended(task.id)
+        } else {
+            None
+        }
+    }
+
+    fn task_has_active_session(&self, task_id: Uuid) -> bool {
+        self.active_session().is_some_and(|s| s.task_id == Some(task_id))
     }
 
     pub fn session(&self, id: Uuid) -> Result<&Session> {
@@ -205,31 +245,85 @@ impl AppData {
 
     // ----- tasks ---------------------------------------------------------
 
+    /// Mark a task turned in. Its completion time is its last session end, so
+    /// a task with a running (or no ended) session can't be completed yet.
+    pub fn complete_task(&mut self, id: Uuid) -> Result<&Task> {
+        self.task(id)?;
+        if self.task_has_active_session(id) {
+            return Err(DomainError::Conflict(
+                "stop the running session before marking the task done".into(),
+            ));
+        }
+        if self.task_last_ended(id).is_none() {
+            return Err(DomainError::Invalid(
+                "a task with no finished session cannot be done".into(),
+            ));
+        }
+        let task = self.task_mut(id)?;
+        task.completed = true;
+        Ok(task)
+    }
+
+    pub fn reopen_task(&mut self, id: Uuid) -> Result<&Task> {
+        let task = self.task_mut(id)?;
+        task.completed = false;
+        Ok(task)
+    }
+
     /// Task to file a session under for `project_id`. Creates the first task
-    /// implicitly and a fresh one when `new_task` is requested.
+    /// implicitly and a fresh one when `new_task` is requested or the current
+    /// task is already turned in. `except` is the session being (re)filed, so
+    /// that its own state doesn't count against its old task.
     fn resolve_task(
         &mut self,
         project_id: Uuid,
         new_task: bool,
+        except: Option<Uuid>,
         now: DateTime<Utc>,
     ) -> Result<Uuid> {
         self.project(project_id)?;
-        let current = self.current_task(project_id).map(|t| (t.id, t.number));
-        match current {
-            Some((id, _)) if !new_task => Ok(id),
-            other => {
-                let number = other.map(|(_, n)| n + 1).unwrap_or(1);
-                let task = Task {
-                    id: Uuid::new_v4(),
-                    project_id,
-                    number,
-                    created_at: now,
-                };
-                let id = task.id;
-                self.tasks.push(task);
-                Ok(id)
+        let current = self
+            .current_task(project_id)
+            .map(|t| (t.id, t.number, t.completed));
+        let Some((id, number, completed)) = current else {
+            return Ok(self.push_task(project_id, 1, now));
+        };
+        // Re-picking the same project on a session already in the task is a
+        // no-op, even when the task is done.
+        let already_there = except.is_some_and(|sid| {
+            self.session(sid).is_ok_and(|s| s.task_id == Some(id))
+        });
+        if !new_task && (already_there || !completed) {
+            return Ok(id);
+        }
+        if !completed {
+            // Moving on implies the old pickup was turned in, provided it has
+            // finished work to date it by and nothing is still running on it.
+            let still_running = self
+                .active_session()
+                .is_some_and(|s| s.task_id == Some(id) && Some(s.id) != except);
+            let has_ended = self
+                .sessions
+                .iter()
+                .any(|s| s.task_id == Some(id) && Some(s.id) != except && s.ended_at.is_some());
+            if !still_running && has_ended {
+                self.task_mut(id)?.completed = true;
             }
         }
+        Ok(self.push_task(project_id, number + 1, now))
+    }
+
+    fn push_task(&mut self, project_id: Uuid, number: u32, now: DateTime<Utc>) -> Uuid {
+        let task = Task {
+            id: Uuid::new_v4(),
+            project_id,
+            number,
+            created_at: now,
+            completed: false,
+        };
+        let id = task.id;
+        self.tasks.push(task);
+        id
     }
 
     /// Drop tasks no session refers to. Keeps numbering tidy after undo-style
@@ -252,7 +346,7 @@ impl AppData {
             return Err(DomainError::Conflict("a session is already running".into()));
         }
         let task_id = match project_id {
-            Some(pid) => Some(self.resolve_task(pid, new_task, now)?),
+            Some(pid) => Some(self.resolve_task(pid, new_task, None, now)?),
             None => None,
         };
         self.sessions.push(Session {
@@ -306,13 +400,14 @@ impl AppData {
             None => existing.task_id,
             Some(Assignment::Untag) => None,
             Some(Assignment::Task(tid)) => {
-                self.task(tid)?;
+                // Filing onto a specific task is deliberate: it reopens a done one.
+                self.task_mut(tid)?.completed = false;
                 Some(tid)
             }
             Some(Assignment::Project {
                 project_id,
                 new_task,
-            }) => Some(self.resolve_task(project_id, new_task, now)?),
+            }) => Some(self.resolve_task(project_id, new_task, Some(id), now)?),
         };
 
         let s = self.session_mut(id)?;
@@ -323,6 +418,12 @@ impl AppData {
             s.note = note
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty());
+        }
+        // A done task never has work in progress: re-activating reopens it.
+        if ended_at.is_none()
+            && let Some(tid) = task_id
+        {
+            self.task_mut(tid)?.completed = false;
         }
         self.prune_empty_tasks();
         self.session(id)
@@ -336,6 +437,25 @@ impl AppData {
         }
         self.prune_empty_tasks();
         Ok(())
+    }
+
+    // ----- settings ------------------------------------------------------
+
+    pub fn update_settings(&mut self, patch: SettingsPatch) -> Result<&Settings> {
+        if let Some(d) = patch.payout_delay_days
+            && d > MAX_PAYOUT_DELAY_DAYS
+        {
+            return Err(DomainError::Invalid(format!(
+                "payout delay must be at most {MAX_PAYOUT_DELAY_DAYS} days"
+            )));
+        }
+        if let Some(c) = patch.cycle_start {
+            self.settings.cycle_start = c;
+        }
+        if let Some(d) = patch.payout_delay_days {
+            self.settings.payout_delay_days = d;
+        }
+        Ok(&self.settings)
     }
 }
 
@@ -527,5 +647,167 @@ mod tests {
         d.start_session(t(5), None, false).unwrap();
         let s = d.stop_session(t(1)).unwrap();
         assert_eq!(s.duration_secs(t(9)), 0);
+    }
+
+    fn project_with_task(d: &mut AppData) -> (Uuid, Uuid) {
+        let pid = d.create_project("Contoso", 40.0, t(0)).unwrap().id;
+        let sid = d.start_session(t(1), Some(pid), false).unwrap().id;
+        let tid = d.session(sid).unwrap().task_id.unwrap();
+        (pid, tid)
+    }
+
+    #[test]
+    fn complete_task_needs_finished_work_and_dates_it_by_the_last_end() {
+        let mut d = AppData::default();
+        let (pid, tid) = project_with_task(&mut d);
+        assert!(matches!(d.complete_task(tid), Err(DomainError::Conflict(_))), "running");
+        d.stop_session(t(2)).unwrap();
+        d.start_session(t(3), Some(pid), false).unwrap();
+        d.stop_session(t(4)).unwrap();
+
+        assert_eq!(d.task_completed_at(d.task(tid).unwrap()), None);
+        d.complete_task(tid).unwrap();
+        assert!(d.task(tid).unwrap().completed);
+        assert_eq!(d.task_completed_at(d.task(tid).unwrap()), Some(t(4)));
+        d.complete_task(tid).unwrap(); // idempotent
+
+        d.reopen_task(tid).unwrap();
+        assert!(!d.task(tid).unwrap().completed);
+        assert!(matches!(d.complete_task(Uuid::new_v4()), Err(DomainError::NotFound(_))));
+    }
+
+    #[test]
+    fn new_task_auto_completes_the_previous_pickup() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        d.start_session(t(3), Some(pid), true).unwrap();
+        assert!(d.task(t1).unwrap().completed);
+        assert_eq!(d.task_completed_at(d.task(t1).unwrap()), Some(t(2)));
+        assert!(!d.current_task(pid).unwrap().completed);
+    }
+
+    #[test]
+    fn new_task_leaves_the_previous_one_open_while_it_is_running() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        // An ended untagged session gets retagged as a new task while task 1 runs.
+        d.start_session(t(3), Some(pid), false).unwrap(); // running on task 1
+        let extra = Session {
+            id: Uuid::new_v4(),
+            task_id: None,
+            started_at: t(4),
+            ended_at: Some(t(5)),
+            note: None,
+        };
+        // Insert an ended untagged session by hand (start would conflict).
+        d.sessions.push(extra.clone());
+        d.update_session(
+            extra.id,
+            SessionPatch {
+                assignment: Some(Assignment::Project { project_id: pid, new_task: true }),
+                ..Default::default()
+            },
+            t(6),
+        )
+        .unwrap();
+        assert!(!d.task(t1).unwrap().completed, "still running");
+        assert_eq!(d.current_task(pid).unwrap().number, 2);
+    }
+
+    #[test]
+    fn moving_the_running_session_to_a_new_task_completes_its_old_task() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        let sid = d.start_session(t(3), Some(pid), false).unwrap().id;
+        d.update_session(
+            sid,
+            SessionPatch {
+                assignment: Some(Assignment::Project { project_id: pid, new_task: true }),
+                ..Default::default()
+            },
+            t(4),
+        )
+        .unwrap();
+        // The moved session no longer counts against task 1, which has t(1)-t(2).
+        assert!(d.task(t1).unwrap().completed);
+        assert_eq!(d.session(sid).unwrap().task_id, Some(d.current_task(pid).unwrap().id));
+        assert!(!d.current_task(pid).unwrap().completed);
+    }
+
+    #[test]
+    fn start_after_done_opens_the_next_task() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        d.complete_task(t1).unwrap();
+        let s = d.start_session(t(3), Some(pid), false).unwrap();
+        let t2 = s.task_id.unwrap();
+        assert_ne!(t2, t1);
+        assert_eq!(d.task(t2).unwrap().number, 2);
+        assert!(d.task(t1).unwrap().completed, "untouched");
+    }
+
+    #[test]
+    fn repicking_the_same_project_on_a_done_task_is_a_no_op() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        d.complete_task(t1).unwrap();
+        let sid = d.sessions[0].id;
+        d.update_session(
+            sid,
+            SessionPatch {
+                assignment: Some(Assignment::Project { project_id: pid, new_task: false }),
+                ..Default::default()
+            },
+            t(3),
+        )
+        .unwrap();
+        assert_eq!(d.session(sid).unwrap().task_id, Some(t1));
+        assert_eq!(d.tasks.len(), 1);
+        assert!(d.task(t1).unwrap().completed);
+    }
+
+    #[test]
+    fn explicit_task_assignment_and_reactivation_reopen_a_done_task() {
+        let mut d = AppData::default();
+        let (pid, t1) = project_with_task(&mut d);
+        d.stop_session(t(2)).unwrap();
+        let s2 = d.start_session(t(3), Some(pid), true).unwrap().id; // completes task 1
+        d.stop_session(t(4)).unwrap();
+        assert!(d.task(t1).unwrap().completed);
+
+        d.update_session(
+            s2,
+            SessionPatch { assignment: Some(Assignment::Task(t1)), ..Default::default() },
+            t(5),
+        )
+        .unwrap();
+        assert!(!d.task(t1).unwrap().completed, "explicit choice reopens");
+        assert_eq!(d.tasks.len(), 1, "empty task 2 pruned");
+
+        d.complete_task(t1).unwrap();
+        d.update_session(s2, SessionPatch { ended_at: Some(None), ..Default::default() }, t(6)).unwrap();
+        assert!(!d.task(t1).unwrap().completed, "work in progress reopens");
+    }
+
+    #[test]
+    fn settings_patch_validates_and_clears() {
+        let mut d = AppData::default();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 24);
+        d.update_settings(SettingsPatch { cycle_start: Some(date), payout_delay_days: Some(10) })
+            .unwrap();
+        assert_eq!(d.settings.cycle_start, date);
+        assert_eq!(d.settings.payout_delay_days, 10);
+        assert!(matches!(
+            d.update_settings(SettingsPatch { payout_delay_days: Some(91), ..Default::default() }),
+            Err(DomainError::Invalid(_))
+        ));
+        assert_eq!(d.settings.payout_delay_days, 10, "rejected patch leaves data alone");
+        d.update_settings(SettingsPatch { cycle_start: Some(None), ..Default::default() }).unwrap();
+        assert_eq!(d.settings.cycle_start, None);
     }
 }
